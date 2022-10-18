@@ -1,0 +1,1611 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Loading Offline Forms</title>
+<link rel="stylesheet" href="support/admin.css?20190329" type="text/css" media="all" />
+<link rel="stylesheet" href="support/admin_print.css?20190329" type="text/css" media="print" />
+<link rel="stylesheet" href="support/flex_forms_dialog.css?20221008-01" type="text/css" media="all" />
+<script type="text/javascript" src="support/jquery-3.5.0.min.js?20221008-01"></script>
+<script type="text/javascript" src="support/jquery.tablednd.min.js?20221008-01"></script>
+<script type="text/javascript" src="support/sha256.js?20221008-01"></script>
+<script type="text/javascript" src="support/flex_forms.js?20221008-01"></script>
+<script type="text/javascript" src="support/flex_forms_dialog.js?20221008-01"></script>
+<style type="text/css">
+a { cursor: pointer; }
+
+.hidden { display: none; }
+
+.offline_form_disabled { text-decoration: line-through; }
+.offline_form_item { margin-top: 0.5em; }
+.offline_form_links { font-size: 0.9em; }
+
+.formitemdata table.formitemtable > tbody > tr.dragactive:nth-child(2n) { background-color: #E3E3E3; }
+
+.offline_field_links { font-size: 0.9em; }
+
+.ff_dialogwrap .ff_formwrap .ff_formwrapinner .edit_field_desc .formitem:nth-child(2) { margin-top: 0; }
+.ff_dialogwrap .ff_formwrap .formitemresult .formitemerror { padding-top: 0.15em; }
+
+.data_export_cols { width: 100%; }
+.data_export_cols > thead > tr > th:first-child, .data_export_cols > tbody > tr > td:first-child { width: 1px; }
+</style>
+</head>
+<body>
+<div id="contentwrap" class="nomenu" tabindex="-1">	<div class="proptitlewrap"><div class="proptitle"><span id="navbutton"><span class="navbuttonline"></span><span class="navbuttonline"></span><span class="navbuttonline"></span></span><span class="proptitletext">Main Menu</span></div></div>
+	<div class="propmessagewrap propmessageerror hidden"><div class="propmessage"><div class="message"><div class="error">Please correct the errors below.</div></div></div></div>
+	<div class="propdescwrap"><div class="propdesc"></div></div>
+	<div class="propmainwrap"><div class="propmain">
+		<noscript>Javascript is required for offline forms to function.</noscript>
+	</div></div>
+
+<script type="text/javascript">
+function ExecuteCustomJavascript(funcbody, val)
+{
+	try
+	{
+		return (new Function('value', funcbody))(val);
+	}
+	catch (e)
+	{
+		console.log(e);
+
+		return false;
+	}
+}
+
+(function() {
+	FlexForms.RegisterCSSOutput({formcss: true, formdialogcss: true});
+
+	// Load the configuration from local storage.
+	var loggedin = false;
+	var config = {password: false, passrounds: 0, forms: {}};
+	var basekey = 'offline-forms|' + window.location.href;
+	if (basekey.indexOf('#') > -1)  basekey = basekey.substring(0, basekey.indexOf('#'));
+
+	var LoadConfig = function() {
+		try
+		{
+			var tempconfig = JSON.parse(window.localStorage.getItem(basekey));
+
+			if (tempconfig)  config = tempconfig;
+		}
+		catch (e)
+		{
+			console.log(e);
+		}
+	};
+
+	var SaveConfig = function() {
+		window.localStorage.setItem(basekey, JSON.stringify(config));
+	};
+
+	// Replaces the form currently being viewed with a new form.
+	var ReplaceForm = function(title, htmldesc, options, errors, request) {
+		document.title = title;
+
+		var proptitle = document.querySelector('.proptitletext');
+
+		proptitle.innerHTML = FlexForms.EscapeHTML(title);
+
+		var propmessagewrap = document.querySelector('.propmessagewrap');
+
+		if (!errors)  propmessagewrap.classList.add('hidden');
+		else  propmessagewrap.classList.remove('hidden');
+
+		var propdesc = document.querySelector('.propdesc');
+
+		propdesc.innerHTML = htmldesc;
+
+		var propmain = document.querySelector('.propmain');
+
+		propmain.innerHTML = '';
+
+		var formwrap = FlexForms.Generate(propmain, options, errors, request);
+		var formnode = formwrap.querySelector('form');
+
+		document.getElementById('contentwrap').scrollTo({ top: 0, behavior: 'smooth' });
+
+		return formnode;
+	}
+
+	// This mechanism for switching the app state inside SwitchAppState() is unfortunately required or else the call stack will grow indefinitely.
+	var nextstatevars = false;
+	var SwitchAppStateInternalHandler = function() {
+		if (nextstatevars !== false)
+		{
+			SwitchAppState(nextstatevars.newstate, nextstatevars.options, nextstatevars.errors, nextstatevars.request);
+
+			nextstatevars = false;
+		}
+	};
+
+	setInterval(SwitchAppStateInternalHandler, 50);
+
+	var SwitchAppStateInternal = function(newstate, options, errors, request) {
+		nextstatevars = {
+			newstate: newstate,
+			options: options,
+			errors: errors,
+			request: request
+		};
+	};
+
+	var SwitchAppState = function(newstate, options, errors, request) {
+		var formnode;
+
+		if (newstate === 'mainmenu')
+		{
+			// Main menu.
+			loggedin = false;
+
+			if (config.password !== false)
+			{
+				var formmap = [];
+				var localeopts = { numeric: true, sensitivity: 'base' };
+
+				for (var x in config.forms)
+				{
+					if (config.forms[x].enabled)  formmap.push(x);
+				}
+
+				formmap.sort(function(x, x2) {
+					return config.forms[x].title.localeCompare(config.forms[x2].title, undefined, localeopts);
+				});
+
+				var forms = [];
+				for (var x = 0; x < formmap.length; x++)
+				{
+					var x2 = formmap[x];
+
+					forms.push('<div class="offline_form_item" data-id="' + FlexForms.EscapeHTML(config.forms[x2].id) + '"><div class="offline_form_title"><a class="view_form">' + FlexForms.EscapeHTML(config.forms[x2].title) + '</a></div></div>');
+				}
+
+				var formoptions = {
+					fields: [
+						{
+							title: 'Forms',
+							type: 'custom',
+							value: '<div class="offline_forms_list">' + (forms.length ? forms.join('') : '<div class="staticwrap">No forms found.</div>') + '</div>'
+						},
+						'split',
+						{
+							title: 'Password',
+							type: 'password',
+							name: 'password',
+							default: ''
+						}
+					],
+					submit: 'Login'
+				};
+
+				formnode = ReplaceForm('Main Menu', 'Select a form below or login.', formoptions, errors, request);
+
+				var FormsListClickHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					if (e.target.classList.contains('view_form'))
+					{
+						// View form.
+						e.preventDefault();
+
+						var itemelem = e.target.closest('.offline_form_item');
+
+						SwitchAppStateInternal('viewform', {id: itemelem.dataset.id});
+					}
+				};
+
+				formnode.querySelector('.offline_forms_list').addEventListener('click', FormsListClickHandler);
+
+				var SubmitHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					var formvars = FlexForms.GetFormVars(formnode, e);
+
+					if (formvars.password === '')  SwitchAppStateInternal('mainmenu', {}, {'password': 'Please enter a password.'}, formvars);
+					else
+					{
+						// Verify the password.
+						var shaobj = new jsSHA("SHA-256", "TEXT", { encoding: "UTF8", numRounds: config.passrounds });
+
+						shaobj.update(formvars.password);
+
+						if (config.password !== shaobj.getHash("HEX"))  SwitchAppStateInternal('mainmenu', {}, {'password': 'Invalid password entered.'}, formvars);
+						else
+						{
+							loggedin = true;
+
+							SwitchAppStateInternal('manageforms', {});
+						}
+					}
+				};
+
+				formnode.addEventListener('submit', SubmitHandler);
+			}
+			else
+			{
+				// Set password.
+				var formoptions = {
+					fields: [
+						{
+							title: 'Password',
+							type: 'password',
+							name: 'password',
+							default: '',
+							desc: 'Note that the password should be fairly memorable but not easy for someone to simply guess (e.g. do not use employer, city of origin, 12345).  This password is only meant as a deterrent to keep people from accessing the editing and data export interface on this device.'
+						}
+					],
+					submit: 'Set Password'
+				};
+
+				formnode = ReplaceForm('Offline Forms Setup', 'Set your password below to begin using offline forms.', formoptions, errors, request);
+
+				var SubmitHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					var formvars = FlexForms.GetFormVars(formnode, e);
+
+					if (formvars.password === '')  SwitchAppStateInternal('mainmenu', {}, {'password': 'Please enter a password.'}, formvars);
+					else
+					{
+						// Increase rounds by powers of two until 250ms passes.
+						config.passrounds = 1;
+						var ts;
+						do
+						{
+							ts = performance.now();
+							config.passrounds *= 2;
+
+							var shaobj = new jsSHA("SHA-256", "TEXT", { encoding: "UTF8", numRounds: config.passrounds });
+
+							shaobj.update(formvars.password);
+
+							config.password = shaobj.getHash("HEX");
+
+						} while (performance.now() - ts < 250);
+
+						SaveConfig();
+
+						loggedin = true;
+
+						SwitchAppStateInternal('manageforms', {});
+					}
+				};
+
+				formnode.addEventListener('submit', SubmitHandler);
+			}
+		}
+		else if (newstate === 'viewform')
+		{
+			// View form.
+			if (!options.hasOwnProperty('id') || !config.forms[options.id] || !config.forms[options.id].enabled)
+			{
+				var formoptions = {
+					fields: [
+					]
+				};
+
+				formnode = ReplaceForm('Unknown Form', 'The selected form is unknown or disabled.<br><a onclick="return SwitchAppState(\'mainmenu\', {});">Go to Main Menu</a>', formoptions, errors, request);
+			}
+			else
+			{
+//console.log(config.forms[options.id]);
+				formnode = ReplaceForm(config.forms[options.id].title, config.forms[options.id].desc, config.forms[options.id].options, errors, request);
+
+				// Turn off autocompletion.
+				formnode.autocomplete = 'off';
+
+				// Run initial Javascript.
+				if (config.forms[options.id].init_js !== '')  ExecuteCustomJavascript(config.forms[options.id].init_js, false);
+
+				var SubmitHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					var formvars = FlexForms.GetFormVars(formnode, e);
+
+					// Validate the submitted information.
+					var errors = {};
+					var valid = true;
+
+					for (var x = 0; x < config.forms[options.id].options.fields.length; x++)
+					{
+						var field = config.forms[options.id].options.fields[x];
+
+						if (typeof(field) !== 'string')
+						{
+							if (field.required && (!field.hasOwnProperty('name') || !formvars.hasOwnProperty(field.name) || (typeof(formvars[field.name]) === 'string' && formvars[field.name] === '')))
+							{
+								if (field.type === 'select')  errors[field.name] = 'Please select an option.';
+								else if (field.type === 'checkbox')  errors[field.name] = 'Please check the checkbox.';
+								else  errors[field.name] = 'Please fill in ' + ((typeof(field.title) === 'string' && field.title !== '') ? field.title : 'the field') + '.';
+
+								valid = false;
+							}
+							else if (typeof(field.validator) === 'string' && field.validator !== '')
+							{
+								// Custom validator.
+								var result = ExecuteCustomJavascript(field.validator, (field.hasOwnProperty('name') && typeof(field.name) === 'string' && formvars[field.name] ? formvars[field.name] : null));
+
+								if (result !== true)
+								{
+									if (typeof(field.name) === 'string')
+									{
+										if (typeof(result) === 'string')  errors[field.name] = result;
+										else  errors[field.name] = 'Unable to validate this field.  Please correct any errors and try again.';
+									}
+
+									valid = false;
+								}
+							}
+						}
+					}
+
+					if (!valid)  SwitchAppStateInternal('viewform', options, errors, formvars);
+					else
+					{
+						// Append data.
+						var data = window.localStorage.getItem(basekey + '|data|' + options.id);
+						if (typeof(data) !== 'string')  data = '';
+
+						var ts = new Date();
+
+						formvars.submitted = ts.toISOString();
+
+						data += JSON.stringify(formvars) + '\n';
+
+						window.localStorage.setItem(basekey + '|data|' + options.id, data);
+
+						SwitchAppStateInternal('viewform', options);
+
+						// Display Thank You message.  The app state can freely change since this is still part of the same webpage but the dialog shows at the document root.
+						if (typeof(config.forms[options.id].thanks) === 'string' && config.forms[options.id].thanks !== '')  FlexForms.Dialog.Alert('Thank You', config.forms[options.id].thanks, null, 10000);
+					}
+				};
+
+				formnode.addEventListener('submit', SubmitHandler);
+			}
+		}
+		else if (loggedin && newstate === 'manageforms')
+		{
+			// Manage forms.
+			var formmap = Object.keys(config.forms);
+			var localeopts = { numeric: true, sensitivity: 'base' };
+
+			formmap.sort(function(x, x2) {
+				return config.forms[x].title.localeCompare(config.forms[x2].title, undefined, localeopts);
+			});
+
+			var forms = [];
+			for (var x = 0; x < formmap.length; x++)
+			{
+				var x2 = formmap[x];
+
+				forms.push('<div class="offline_form_item" data-id="' + FlexForms.EscapeHTML(config.forms[x2].id) + '"><div class="offline_form_title' + (config.forms[x2].enabled ? '' : ' offline_form_disabled') + '">' + FlexForms.EscapeHTML(config.forms[x2].title) + '</div><div class="offline_form_links"><a class="edit_form">Edit</a> | <a class="manage_data">Manage Data</a> | <a class="delete_form">Delete</a></div></div>');
+			}
+
+			var formoptions = {
+				fields: [
+					{
+						title: 'Forms',
+						type: 'custom',
+						value: '<div class="offline_forms_list">' + (forms.length ? forms.join('') : '<div class="staticwrap">No forms found.</div>') + '</div>'
+					},
+					'split',
+					{
+						title: 'New Form Title / Import JSON',
+						type: 'text',
+						name: 'title_import',
+						default: '',
+						desc: 'Either enter a title to use for the new form OR paste an exported JSON form from another device into this field to import a form.'
+					}
+				],
+				submit: 'Create/Import'
+			};
+
+			formnode = ReplaceForm('Manage Offline Forms', 'Manage the offline forms.<br><a onclick="return SwitchAppState(\'mainmenu\', {});">Logout</a>', formoptions, errors, request);
+
+			var FormsListClickHandler = function(e) {
+				if (!e.isTrusted)  return;
+
+				if (e.target.classList.contains('edit_form'))
+				{
+					// Edit form.
+					e.preventDefault();
+
+					var itemelem = e.target.closest('.offline_form_item');
+
+					SwitchAppStateInternal('editform', {id: itemelem.dataset.id});
+				}
+				else if (e.target.classList.contains('manage_data'))
+				{
+					// Manage data.
+					e.preventDefault();
+
+					var itemelem = e.target.closest('.offline_form_item');
+
+					SwitchAppStateInternal('manageformdata', {id: itemelem.dataset.id});
+				}
+				else if (e.target.classList.contains('delete_form'))
+				{
+					// Delete form.
+					e.preventDefault();
+
+					var itemelem = e.target.closest('.offline_form_item');
+
+					FlexForms.Dialog.Confirm('Delete Form', 'Are you sure you want to delete this form and all of its collected data?', 'Yes', 'No', function() {
+						window.localStorage.removeItem(basekey + '|data|' + itemelem.dataset.id);
+
+						delete config.forms[itemelem.dataset.id];
+
+						itemelem.remove();
+
+						SaveConfig();
+
+						if (Object.keys(config.forms).length === 0)  formnode.querySelector('.offline_forms_list').innerHTML = '<div class="staticwrap">No forms found.</div>';
+					});
+				}
+			};
+
+			formnode.querySelector('.offline_forms_list').addEventListener('click', FormsListClickHandler);
+
+			var SubmitHandler = function(e) {
+				if (!e.isTrusted)  return;
+
+				e.preventDefault();
+
+				var formvars = FlexForms.GetFormVars(formnode, e);
+
+				formvars.title_import = formvars.title_import.trim();
+
+				if (formvars.title_import === '')  SwitchAppStateInternal('manageforms', {}, {'title_import': 'Please enter a title for a new form or JSON to import a form.'}, formvars);
+				else if (formvars.title_import.charAt(0) === '{')  // }
+				{
+					// Import offline form JSON.
+					try
+					{
+						var tempform = JSON.parse(formvars.title_import);
+						if (tempform.hasOwnProperty('id') && tempform.hasOwnProperty('title') && tempform.hasOwnProperty('desc') && tempform.hasOwnProperty('init_js') && tempform.hasOwnProperty('enabled') && tempform.hasOwnProperty('thanks') && tempform.hasOwnProperty('options') && tempform.options.hasOwnProperty('fields') && tempform.options.hasOwnProperty('submit') && tempform.title !== '')
+						{
+							var ImportForm = function() {
+								config.forms[tempform.id] = tempform;
+
+								SaveConfig();
+
+								SwitchAppStateInternal('manageforms', {});
+							};
+
+							var OverwriteFormStep = function() {
+								// Check for an existing form.
+								if (!config.forms[tempform.id])  ImportForm();
+								else
+								{
+									FlexForms.Dialog.Confirm('Overwrite Existing Form', 'Overwrite the existing form "' + config.forms[tempform.id].title + '"?', 'Yes', 'No', ImportForm, function() {
+										// Change the form ID until it does not conflict.
+										var tempid = Math.floor(Date.now() / 1000);
+
+										while (config.forms.hasOwnProperty('form_' + tempid))  tempid++;
+
+										tempform.id = tempid;
+
+										ImportForm();
+									}, function() { });
+								}
+							};
+
+							var RemoveJavascript = function() {
+								for (var x = 0; x < tempform.options.fields; x++)
+								{
+									if (typeof(tempform.options.fields[x]) !== 'string')  tempform.options.fields[x].validator = '';
+								}
+
+								tempform.init_js = '';
+
+								OverwriteFormStep();
+							};
+
+							// Check for custom Javascript.
+							var hasjs = (tempform.init_js !== '');
+
+							for (var x = 0; x < tempform.options.fields.length; x++)
+							{
+								if (typeof(tempform.options.fields[x]) !== 'string' && typeof(tempform.options.fields[x].validator) === 'string' && tempform.options.fields[x].validator !== '')  hasjs = true;
+							}
+
+							if (hasjs)  FlexForms.Dialog.Confirm('Contains Javascript', 'The form being imported contains custom Javascript.  Importing offline forms from unknown sources can be used for all kinds of security exploits including attempts at malware deployment, persistent threats, network infiltration, data exfiltration, and more.\n\nFor safety, the custom Javascript can be removed.', 'Remove', 'Keep', RemoveJavascript, OverwriteFormStep, function() {});
+							else  OverwriteFormStep();
+						}
+						else
+						{
+							SwitchAppStateInternal('manageforms', {}, {'title_import': 'An error occurred while attempting to import the offline form.  Missing required object keys.'}, formvars);
+						}
+					}
+					catch (e)
+					{
+						SwitchAppStateInternal('manageforms', {}, {'title_import': 'An error occurred while attempting to parse or import the offline form.  ' + e.message}, formvars);
+					}
+				}
+				else
+				{
+					// Create a new form and start editing it.
+					var tempform = {id: 'form_' + Math.floor(Date.now() / 1000), title: formvars.title_import, desc: '', init_js: '', enabled: true, thanks: '', options: {fields: [], submit: 'Submit'}};
+
+					config.forms[tempform.id] = tempform;
+
+					SaveConfig();
+
+					SwitchAppStateInternal('editform', {id: tempform.id});
+				}
+			};
+
+			formnode.addEventListener('submit', SubmitHandler);
+		}
+		else if (loggedin && newstate === 'manageformdata')
+		{
+			// Edit form.
+			if (!options.hasOwnProperty('id') || !config.forms[options.id])
+			{
+				var formoptions = {
+					fields: [
+					]
+				};
+
+				formnode = ReplaceForm('Unknown Form', 'The selected form is unknown.<br><a onclick="return SwitchAppState(\'manageforms\', {});">Manage Forms</a>', formoptions, errors, request);
+			}
+			else
+			{
+				var formoptions = {
+					useform: true,
+					fields: [
+						{
+							title: 'Form',
+							type: 'static',
+							value: config.forms[options.id].title
+						},
+						{
+							title: 'Columns',
+							class: 'data_export_cols nodrag nodrop',
+							type: 'table',
+							cols: ['Order', 'Column'],
+							rows: [],
+							desc: 'The columns to export, their exported names, and their preferred order.'
+						},
+						{
+							class: 'export_headers',
+							type: 'checkbox',
+							name: 'data_export_headers',
+							value: 'Yes',
+							display: 'First line column headers',
+							default: true
+						},
+						{
+							title: 'CSV Export',
+							type: 'textarea',
+							name: 'csvdata',
+							default: '',
+							htmldesc: '<a id="export_copy_csv">Copy to clipboard</a> | <a id="save_csv">Save as CSV</a>'
+						},
+						{
+							title: 'JSON Lines Export',
+							type: 'textarea',
+							name: 'jsondata',
+							default: '',
+							htmldesc: '<a id="export_copy_json">Copy to clipboard</a> | <a id="save_json">Save as JSONL</a>'
+						},
+// Just an idea to allow the user to send the data directly to an online service.
+// Unfortunately, entering correct information into all of these fields would almost certainly take far longer than simply exporting the data and then importing it into the web interface of the service itself.
+// Probably would not want to store the information either since sensitive credentials could be leaked.
+//
+//						'split',
+//						{
+//							title: 'URL',
+//							type: 'text',
+//							name: 'url',
+//							default: '',
+//							desc: 'A URL to an online service that accepts bulk CSV or JSON Lines data for import.  This function requires network connectivity.'
+//						},
+//						{
+//							title: 'HTTP Method',
+//							type: 'select',
+//							name: 'url_method',
+//							options: [
+//								{ key: 'POST', display: 'POST' },
+//								{ key: 'PUT', display: 'PUT' },
+//								{ key: 'PATCH', display: 'PATCH' },
+//							],
+//							default: 'POST',
+//							desc: 'The type of HTTP method to use for the request.  Some services differentiate between various HTTP methods.'
+//						},
+//						{
+//							title: 'Authentication',
+//							type: 'select',
+//							name: 'url_auth',
+//							options: [
+//								{ key: '', display: 'None' },
+//								{ key: 'Basic', display: 'Basic authentication' },
+//								{ key: 'Bearer', display: 'Bearer token' },
+//							],
+//							default: '',
+//							desc: 'The type of HTTP Authorization header to use with the request.'
+//						},
+//
+//						'html:<div class="hidden manage_data_showhide manage_data_url_auth-basic">',
+//						{
+//							title: 'Basic Auth Username',
+//							type: 'text',
+//							name: 'url_auth_username',
+//							default: '',
+//						},
+//						{
+//							title: 'Basic Auth Password',
+//							type: 'password',
+//							name: 'url_auth_password',
+//							default: '',
+//						},
+//						'html:</div>',
+//
+//						'html:<div class="hidden manage_data_showhide manage_data_url_auth-bearer">',
+//						{
+//							title: 'Bearer Token',
+//							type: 'text',
+//							name: 'url_auth_bearer',
+//							default: '',
+//							desc: 'Bearer tokens (aka API tokens) must not expire.  OAuth Bearer tokens tend to expire after a while and might not work as a result.'
+//						},
+//						'html:</div>',
+//
+//						{
+//							title: 'Data Format',
+//							type: 'select',
+//							name: 'data_format',
+//							options: [
+//								{ key: 'text/csv', display: 'CSV (text/csv)' },
+//								{ key: 'application/x-ndjson', display: 'JSON Lines (application/x-ndjson)' },
+//								{ key: 'application/jsonlines', display: 'JSON Lines (application/jsonlines)' },
+//								{ key: 'application/jsonl', display: 'JSON Lines (application/jsonl)' },
+//							],
+//							default: 'text/csv',
+//							desc: 'The data format to use and the content MIME type.'
+//						},
+					],
+//					submit: ['Send']
+				};
+
+				formnode = ReplaceForm('Manage Data', 'Export the submitted form data as CSV or JSON Lines.<br><a onclick="return SwitchAppState(\'manageforms\', {});">Back to Manage Forms</a> | <a class="delete_data">Delete Data</a>', formoptions, errors, request);
+
+				// Initialize the columns table.
+				var origdata = window.localStorage.getItem(basekey + '|data|' + options.id);
+				if (typeof(origdata) !== 'string')  origdata = '';
+
+				origdata = origdata.split('\n');
+
+				var origfieldnames = {};
+
+				var nextfieldid = 1;
+
+				var AppendFieldRow = function(field) {
+					if (typeof(field) === 'string' || !field.hasOwnProperty('name') || field.name === '' || origfieldnames.hasOwnProperty(field.name))  return;
+
+					origfieldnames[field.name] = true;
+
+					var html = '<tr id="offline_field_' + nextfieldid + '"><td class="draghandle">&nbsp;</td><td>';
+
+					if (field.hasOwnProperty('title') && field.title !== '')  html += '<div class="offline_field_title">' + FlexForms.EscapeHTML(field.title) + '</div>';
+					html += '<table width="100%"><tr><td width="1"><input type="checkbox" name="orig_fields[]" value="' + FlexForms.EscapeHTML(field.name) + '" checked></td>';
+					html += '<td><div class="textitemwrap"><input class="text" type="text" name="final_fields[]" value="' + FlexForms.EscapeHTML(field.name) + '"></div></td></tr></table>';
+
+					html += '</td></tr>';
+
+					formnode.querySelector('.data_export_cols tbody').innerHTML += html;
+
+					nextfieldid++;
+				}
+
+				// Date/time submitted.
+				AppendFieldRow({title: 'Submitted', name: 'submitted'});
+
+				// Known fields with names.
+				for (var x = 0; x < config.forms[options.id].options.fields.length; x++)
+				{
+					AppendFieldRow(config.forms[options.id].options.fields[x]);
+				}
+
+				// Append any additional columns from the stored data.
+				for (var y = 0; y < origdata.length; y++)
+				{
+					try
+					{
+						var line = origdata[y].trim();
+
+						if (line !== '')
+						{
+							line = JSON.parse(line);
+
+							if (line)
+							{
+								for (var x in line)
+								{
+									if (!origfieldnames.hasOwnProperty(x))  AppendFieldRow({name: x});
+								}
+							}
+						}
+					}
+					catch (e)
+					{
+						console.log(e);
+					}
+				}
+
+				var csvdata = '';
+				var jsondata = '';
+
+				var GenerateCSVRow = function(row) {
+					var result = [];
+
+					for (var x = 0; x < row.length; x++)
+					{
+						var coldata = row[x];
+
+						if (typeof(coldata) !== 'string')  coldata = coldata.toString();
+						else
+						{
+							coldata = coldata.replaceAll('"', '""');
+
+							if (coldata === '' || coldata.indexOf('"') > -1 || coldata.trim() !== coldata || coldata.indexOf(',') > -1 || coldata.indexOf('\r') > -1 || coldata.indexOf('\n') > -1 || coldata.indexOf('\x00') > -1)  coldata = '"' + coldata + '"';
+						}
+
+						result.push(coldata);
+					}
+
+					return result.join(',') + '\r\n';
+				};
+
+				var UpdateExportFields = function() {
+					var origfields = formnode.querySelectorAll('input[name="orig_fields[]"]');
+					var finalfields = formnode.querySelectorAll('input[name="final_fields[]"]');
+
+					// Generate updated data.
+					csvdata = '';
+					jsondata = '';
+
+					var useheaders = formnode.querySelector('input[name=data_export_headers]').checked;
+
+					if (useheaders)
+					{
+						var row = [];
+						for (var x = 0; x < origfields.length; x++)
+						{
+							if (origfields[x].checked)  row.push(finalfields[x].value.trim());
+						}
+
+						csvdata += GenerateCSVRow(row);
+						jsondata += JSON.stringify(row) + '\n';
+					}
+
+					for (var y = 0; y < origdata.length; y++)
+					{
+						try
+						{
+							var line = origdata[y].trim();
+
+							if (line !== '')
+							{
+								line = JSON.parse(line);
+
+								if (line)
+								{
+									var row = [];
+									var jsonrow = {};
+
+									for (var x = 0; x < origfields.length; x++)
+									{
+										if (origfields[x].checked)
+										{
+											row.push(line.hasOwnProperty(origfields[x].value) ? line[origfields[x].value] : '');
+
+											if (!useheaders)  jsonrow[finalfields[x].value.trim()] = (line.hasOwnProperty(origfields[x].value) ? line[origfields[x].value] : '');
+										}
+									}
+
+									csvdata += GenerateCSVRow(row);
+									jsondata += JSON.stringify(useheaders ? row : jsonrow) + '\n';
+								}
+							}
+						}
+						catch (e)
+						{
+						}
+					}
+
+					formnode.querySelector('textarea[name=csvdata]').value = csvdata;
+					formnode.querySelector('textarea[name=jsondata]').value = jsondata;
+
+					var ts = new Date();
+					var currdate = new Date(ts.getTime() - (ts.getTimezoneOffset() * 60000)).toISOString().split("T")[0];
+					var basefilename = config.forms[options.id].title + ' - ' + currdate;
+
+					var savecsvelem = document.getElementById('save_csv');
+					var savejsonelem = document.getElementById('save_json');
+
+					savecsvelem.download = basefilename + '.csv';
+					savejsonelem.download = basefilename + '.jsonl';
+
+					savecsvelem.href = 'data:text/csv;charset=utf-8;base64,' + btoa(csvdata);
+					savejsonelem.href = 'data:application/ndjson;charset=utf-8;base64,' + btoa(jsondata);
+				};
+
+				jQuery('.data_export_cols').tableDnD({
+					dragHandle: '.draghandle',
+					onDragClass: 'dragactive',
+					onDrop: function(table, row) {
+						UpdateExportFields();
+					}
+				});
+
+				formnode.querySelector('input[name=data_export_headers]').addEventListener('click', function(e) {
+					UpdateExportFields();
+				});
+
+				formnode.querySelector('.data_export_cols').addEventListener('change', function(e) {
+					UpdateExportFields();
+				});
+
+				UpdateExportFields();
+
+				// Restore the export textboxes if they are changed.
+				formnode.querySelector('textarea[name=csvdata]').addEventListener('change', function (e) {
+					formnode.querySelector('textarea[name=csvdata]').value = csvdata;
+				});
+
+				formnode.querySelector('textarea[name=jsondata]').addEventListener('change', function (e) {
+					formnode.querySelector('textarea[name=jsondata]').value = jsondata;
+				});
+
+				// Clipboard paste handler.
+				var ExportClipboardPasteHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+				};
+
+				// CSV export clipboard cut/copy handler.
+				var CSVExportClipboardCutCopyHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					e.clipboardData.dropEffect = 'copy';
+					e.clipboardData.setData('text/plain', csvdata);
+
+					FlexForms.Dialog.Alert('Exported', 'Copied the exported CSV data to the clipboard.', null, 3000);
+				};
+
+				var CSVExportClickHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					formnode.querySelector('textarea[name=csvdata]').focus();
+					formnode.querySelector('textarea[name=csvdata]').select();
+
+					document.execCommand('copy');
+				};
+
+				// JSON export clipboard cut/copy handler.
+				var JSONExportClipboardCutCopyHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					e.clipboardData.dropEffect = 'copy';
+					e.clipboardData.setData('text/plain', jsondata);
+
+					FlexForms.Dialog.Alert('Exported', 'Copied the exported JSON Lines data to the clipboard.', null, 3000);
+				};
+
+				var JSONExportClickHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					formnode.querySelector('textarea[name=jsondata]').focus();
+					formnode.querySelector('textarea[name=jsondata]').select();
+
+					document.execCommand('copy');
+				};
+
+				formnode.querySelector('textarea[name=csvdata]').addEventListener('cut', CSVExportClipboardCutCopyHandler);
+				formnode.querySelector('textarea[name=csvdata]').addEventListener('copy', CSVExportClipboardCutCopyHandler);
+				formnode.querySelector('textarea[name=csvdata]').addEventListener('paste', ExportClipboardPasteHandler);
+				document.getElementById('export_copy_csv').addEventListener('click', CSVExportClickHandler);
+
+				formnode.querySelector('textarea[name=jsondata]').addEventListener('cut', JSONExportClipboardCutCopyHandler);
+				formnode.querySelector('textarea[name=jsondata]').addEventListener('copy', JSONExportClipboardCutCopyHandler);
+				formnode.querySelector('textarea[name=jsondata]').addEventListener('paste', ExportClipboardPasteHandler);
+				document.getElementById('export_copy_json').addEventListener('click', JSONExportClickHandler);
+
+				document.querySelector('.delete_data').addEventListener('click', function(e) {
+					if (!e.isTrusted)  return;
+
+					// Delete data.
+					e.preventDefault();
+
+					FlexForms.Dialog.Confirm('Delete Data', 'Are you sure you want to delete the collected form data?', 'Yes', 'No', function() {
+						origdata = [];
+
+						window.localStorage.removeItem(basekey + '|data|' + options.id);
+
+						SaveConfig();
+
+						UpdateExportFields();
+					});
+				});
+			}
+		}
+		else if (loggedin && newstate === 'editform')
+		{
+			// Edit form.
+			if (!options.hasOwnProperty('id') || !config.forms[options.id])
+			{
+				var formoptions = {
+					fields: [
+					]
+				};
+
+				formnode = ReplaceForm('Unknown Form', 'The selected form is unknown.<br><a onclick="return SwitchAppState(\'manageforms\', {});">Manage Forms</a>', formoptions, errors, request);
+			}
+			else
+			{
+				var formoptions = {
+					useform: true,
+					fields: [
+						{
+							title: 'Title',
+							type: 'text',
+							name: 'title',
+							default: config.forms[options.id].title
+						},
+						{
+							type: 'checkbox',
+							name: 'enabled',
+							value: 'Yes',
+							display: 'Enabled',
+							default: config.forms[options.id].enabled
+						},
+						{
+							title: 'Description / Custom HTML',
+							type: 'textarea',
+							name: 'desc',
+							default: config.forms[options.id].desc,
+							desc: 'When using custom HTML, do not put custom Javascript code here.'
+						},
+						{
+							title: 'Custom Javascript',
+							type: 'textarea',
+							name: 'init_js',
+							default: config.forms[options.id].init_js,
+							desc: 'Runs code upon form load.  Custom Javascript should be limited to what is already loaded (jQuery, etc).  Any external resource requests will most likely not function offline.'
+						},
+						{
+							title: 'Form Fields',
+							class: 'offline_fields nodrag nodrop',
+							type: 'table',
+							cols: ['Order', 'Field'],
+							rows: [],
+							htmldesc: '<a id="add_field">Add Field</a>'
+						},
+						{
+							title: 'Submit Button Text',
+							type: 'text',
+							name: 'submit',
+							default: config.forms[options.id].options.submit
+						},
+						{
+							title: 'Thank You Text',
+							type: 'textarea',
+							name: 'thanks',
+							default: config.forms[options.id].thanks,
+							desc: 'Display a message after each successful submission.'
+						},
+						{
+							title: 'Preview',
+							type: 'custom',
+							value: '<iframe id="preview" src="#' + FlexForms.EscapeHTML(String(options.id)) + '" width="100%" height="300" frameborder="0" style="width: 100%; height: 40vh; border: 1px solid #CCCCCC;"></iframe>'
+						},
+						{
+							title: 'Export Form',
+							type: 'text',
+							name: 'export',
+							default: JSON.stringify(config.forms[options.id]),
+							htmldesc: '<a id="export_copy">Copy to clipboard</a>'
+						},
+					]
+				};
+
+				formnode = ReplaceForm('Edit Form', 'Edit the form.<br><a onclick="return SwitchAppState(\'manageforms\', {});">Back to Manage Forms</a>', formoptions, errors, request);
+
+				var nextfieldid = 1;
+
+				var GetUpdatedFieldTitleHTML = function(field) {
+					if (typeof(field) === 'string')  return (field === '' ? '<i>No field type</i>' : FlexForms.EscapeHTML(field));
+
+					return (!field.hasOwnProperty('title') || field.title === '' ? '<i>No title</i>' : field.title) + ' (' + FlexForms.EscapeHTML(field.type + (field.hasOwnProperty('name') && field.name !== '' ? '; ' + field.name : '')) + ')';
+				};
+
+				var InjectField = function(field) {
+					var html = '<tr id="offline_field_' + nextfieldid + '"><td class="draghandle">&nbsp;</td><td><input type="hidden" name="fields[]" value="' + FlexForms.EscapeHTML(JSON.stringify(field)) + '">';
+
+					html += '<div class="offline_field_title">' + GetUpdatedFieldTitleHTML(field) + '</div>';
+					html += '<div class="offline_field_links"><a class="edit_field">Edit</a> | <a class="delete_field">Delete</a></div></td></tr>';
+
+					formnode.querySelector('.offline_fields tbody').innerHTML += html;
+
+					nextfieldid++;
+				};
+
+				for (var x = 0; x < config.forms[options.id].options.fields.length; x++)
+				{
+					InjectField(config.forms[options.id].options.fields[x]);
+				}
+
+				var SaveAndUpdatePreview = function(formvars) {
+//console.log(formvars);
+					// Update and save the form.
+					config.forms[options.id].title = formvars.title;
+					config.forms[options.id].enabled = (formvars.enabled === 'Yes');
+					config.forms[options.id].desc = formvars.desc;
+					config.forms[options.id].init_js = formvars.init_js;
+					config.forms[options.id].options.fields = [];
+
+					if (formvars.fields)
+					{
+						for (var x = 0; x < formvars.fields.length; x++)  config.forms[options.id].options.fields.push(JSON.parse(formvars.fields[x]));
+					}
+
+					config.forms[options.id].options.submit = formvars.submit;
+					config.forms[options.id].thanks = formvars.thanks;
+
+					SaveConfig();
+
+					// Reload the preview.
+					document.getElementById('preview').contentWindow.LoadConfig();
+					document.getElementById('preview').contentWindow.SwitchAppState('viewform', {id: options.id});
+
+					// Update the export textbox.
+					formnode.querySelector('input[name=export]').value = JSON.stringify(config.forms[options.id]);
+				};
+
+				var StringifySelectOptions = function(options) {
+					var result = [];
+
+					for (var x = 0; x < options.length; x++)
+					{
+						if (options[x].values && Array.isArray(options[x].values))
+						{
+							result.push(options[x].display + ' => [');
+
+							for (var x2 = 0; x2 < options[x].values.length; x2++)
+							{
+								if (options[x].values[x2].key === options[x].values[x2].display)  result.push('  ' + options[x].values[x2].key + ' => ' + options[x].values[x2].display);
+								else  result.push('  ' + options[x].values[x2].key);
+							}
+
+							result.push(']');
+							result.push('');
+						}
+						else
+						{
+							if (options[x].key === options[x].display)  result.push(options[x].key + ' => ' + options[x].display);
+							else  result.push(options[x].key);
+						}
+					}
+
+					return result.join('\n');
+				};
+
+				var StringifySelections = function(selections) {
+					if (Array.isArray(selections))  return selections.join('\n');
+
+					var result = [];
+
+					for (var x in selections)  result.push(x);
+
+					return result.join('\n');
+				};
+
+				var ParseSelectOptions = function(options) {
+					var result = [];
+					var stack = [];
+
+					var lines = options.split('\n');
+					for (var x = 0; x < lines.length; x++)
+					{
+						var line = lines[x].trim();
+
+						if (line !== '')
+						{
+							var pos = line.indexOf('=>');
+
+							if (pos > -1)
+							{
+								var key = line.substring(0, pos).trim();
+								var display = line.substring(pos + 2).trim();
+
+								if (display === '[')  stack.push({ key: key, values: [] });
+								else if (stack.length)  stack[stack.length - 1].values.push({ key: key, display: display });
+								else  result.push({ key: key, display: display });
+							}
+							else if (line === ']' && stack.length)
+							{
+								result.push(stack.pop());
+							}
+							else
+							{
+								result.push({ key: line, display: line });
+							}
+						}
+					}
+
+					while (stack.length)  result.push(stack.pop());
+
+					return result;
+				};
+
+				var ParseSelections = function(selections) {
+					return selections.split('\n');
+				};
+
+				document.getElementById('add_field').addEventListener('click', function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					InjectField('');
+
+					jQuery('.offline_fields').tableDnDUpdate();
+				});
+
+				var FormFieldsClickHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					if (e.target.classList.contains('edit_field'))
+					{
+						// Edit field.
+						e.preventDefault();
+
+						var tdelem = e.target.closest('td');
+						var inputelem = tdelem.querySelector('input');
+						var titleelem = tdelem.querySelector('.offline_field_title');
+
+						var fielddata = JSON.parse(inputelem.value);
+
+						var dlg, dlgformnode, typeelem;
+
+						var SetupDialog = function() {
+							dlgformnode = dlg.GetElements().formnode;
+							typeelem = dlgformnode.querySelector('select[name=type]');
+
+							typeelem.addEventListener('change', SwitchFieldType);
+							typeelem.addEventListener('keydown', SwitchFieldType);
+
+							SwitchFieldType();
+						};
+
+						var dlgoptions = {
+							title: 'Edit Field',
+
+							content: {
+								fields: [
+									{
+										title: 'Field Type',
+										width: '38em',
+										type: 'select',
+										name: 'type',
+										options: [
+											{ key: 'text', display: 'Text box' },
+											{ key: 'textarea', display: 'Textarea' },
+											{ key: 'checkbox', display: 'One checkbox' },
+											{ key: 'select', display: 'List selection' },
+											{ key: 'hidden', display: 'Hidden' },
+											{ key: 'static', display: 'Static information' },
+											{ key: 'custom', display: 'Custom HTML' },
+											{ key: 'split', display: 'Special:  Splitter' },
+											{ key: 'startrow', display: 'Special:  Start new row' },
+											{ key: 'endrow', display: 'Special:  End rows' },
+											{ key: 'html', display: 'Special:  HTML injection' },
+										],
+										default: (typeof(fielddata) === 'string' ? (fielddata.startsWith('html:') ? 'html' : fielddata) : fielddata.type)
+									},
+
+									'html:<div class="hidden edit_field_showhide edit_field-text">',
+									{
+										title: 'Text Mode',
+										width: '38em',
+										type: 'select',
+										name: 'subtype',
+										options: [
+											{ key: '', display: 'Plain text' },
+											{ key: 'number', display: 'Number' },
+											{ key: 'date', display: 'Date' },
+											{ key: 'datetime-local', display: 'Date and time (localized)' },
+											{ key: 'time', display: 'Time (localized)' },
+											{ key: 'email', display: 'Email address' },
+											{ key: 'tel', display: 'Telephone number' },
+											{ key: 'url', display: 'URL' },
+											{ key: 'color', display: 'Color picker' },
+										],
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('subtype') ? fielddata.subtype : '')),
+										htmldesc: '<div style="max-width: 38em;">The appearance and functionality of non-plain text modes may differ significantly between devices and browsers.</div>'
+									},
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-text edit_field-textarea edit_field-checkbox edit_field-select edit_field-static edit_field-custom">',
+									'startrow',
+									{
+										title: 'Title',
+										width: '30em',
+										type: 'text',
+										name: 'field_title',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('title') ? fielddata.title : ''))
+									},
+									{
+										title: 'Width',
+										width: '7em',
+										type: 'text',
+										name: 'field_width',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('width') ? fielddata.width.replaceAll(/[^0-9]/g, '') : ''))
+									},
+									'endrow',
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-text edit_field-textarea edit_field-checkbox edit_field-select">',
+									{
+										type: 'checkbox',
+										name: 'field_required',
+										value: 'Yes',
+										display: 'Required field',
+										default: (typeof(fielddata) === 'string' ? true : (fielddata.hasOwnProperty('required') ? fielddata.required : false))
+									},
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-text edit_field-textarea edit_field-checkbox edit_field-select edit_field-hidden">',
+									{
+										title: 'Internal Field Name',
+										width: '38em',
+										type: 'text',
+										name: 'field_name',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('name') ? fielddata.name : ''))
+									},
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-text edit_field-checkbox edit_field-hidden edit_field-static">',
+									{
+										title: 'Initial Value',
+										width: '38em',
+										type: 'text',
+										name: 'default_text',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('default') && typeof(fielddata.default) === 'string' ? fielddata.default : (fielddata.hasOwnProperty('value') && typeof(fielddata.value) === 'string' ? fielddata.value : '')))
+									},
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-textarea edit_field-custom edit_field-html">',
+									{
+										title: 'Initial Value',
+										width: '38em',
+										type: 'textarea',
+										name: 'default_textarea',
+										default: (typeof(fielddata) === 'string' ? (fielddata.startsWith('html:') ? fielddata.substring(5) : '') : (fielddata.type !== 'checkbox' && fielddata.hasOwnProperty('default') && typeof(fielddata.default) === 'string' ? fielddata.default : (fielddata.hasOwnProperty('value') && typeof(fielddata.value) === 'string' ? fielddata.value : '')))
+									},
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-checkbox">',
+									{
+										title: 'Display Label',
+										width: '38em',
+										type: 'text',
+										name: 'field_display',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('display') ? fielddata.display : ''))
+									},
+									{
+										type: 'checkbox',
+										name: 'default_check',
+										value: 'Yes',
+										display: 'Checked by default',
+										default: (typeof(fielddata) === 'string' ? false : (fielddata.hasOwnProperty('default') && typeof(fielddata.default) === 'boolean' ? (fielddata.default === true) : false))
+									},
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-select">',
+									{
+										title: 'Select Mode',
+										width: '38em',
+										type: 'select',
+										name: 'select_mode',
+										options: [
+											{ key: 'select', display: 'Dropdown' },
+											{ key: 'radio', display: 'Radio buttons' },
+											{ key: 'checkbox', display: 'Checkboxes' },
+										],
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('mode') ? fielddata.mode : ''))
+									},
+									{
+										title: 'Options',
+										width: '38em',
+										type: 'textarea',
+										name: 'select_options',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('options') ? StringifySelectOptions(fielddata.options) : ''))
+									},
+									{
+										title: 'Initial Selection(s)',
+										width: '38em',
+										type: 'textarea',
+										name: 'default_select',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('default') ? StringifySelections(fielddata.default) : (fielddata.hasOwnProperty('select') ? StringifySelections(fielddata.select) : '')))
+									},
+									'html:</div>',
+
+									'html:<div class="edit_field_desc hidden edit_field_showhide edit_field-text edit_field-textarea edit_field-checkbox edit_field-select edit_field-static edit_field-custom">',
+									{
+										title: 'Description',
+										width: '38em',
+										type: 'text',
+										name: 'field_desc',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('desc') && typeof(fielddata.desc) === 'string' ? fielddata.desc : (fielddata.hasOwnProperty('htmldesc') && typeof(fielddata.htmldesc) === 'string' ? fielddata.htmldesc : '')))
+									},
+									{
+										type: 'checkbox',
+										name: 'htmldesc',
+										value: 'Yes',
+										display: 'HTML description',
+										default: (typeof(fielddata) !== 'string' && fielddata.hasOwnProperty('htmldesc') && typeof(fielddata.htmldesc) === 'string')
+									},
+									'html:</div>',
+
+									'html:<div class="hidden edit_field_showhide edit_field-text edit_field-textarea edit_field-checkbox edit_field-select">',
+									{
+										title: 'Custom Validation Javascript',
+										width: '38em',
+										type: 'textarea',
+										name: 'validator',
+										default: (typeof(fielddata) === 'string' ? '' : (fielddata.hasOwnProperty('validator') && typeof(fielddata.validator) === 'string' ? fielddata.validator : '')),
+										htmldesc: '<div style="max-width: 38em;">The variable name to verify is "value" when used.  Return a boolean of true OR a string to display as the error message.  Leave blank to not do custom validation.</div>'
+									},
+									'html:</div>',
+
+								],
+								submit: ['OK', 'Cancel'],
+								submitname: 'submit'
+							},
+
+							onsubmit: function(dlgformvars, dlgformnode, e) {
+								if (dlgformvars.submit === 'OK')
+								{
+									var field;
+
+									// Handle special types.
+									if (dlgformvars.type === 'split')  field = 'split';
+									else if (dlgformvars.type === 'startrow')  field = 'startrow';
+									else if (dlgformvars.type === 'endrow')  field = 'endrow';
+									else if (dlgformvars.type === 'html')  field = 'html:' + dlgformvars.default_textarea;
+									else
+									{
+										// Process normal types.
+										field = {};
+
+										field.type = dlgformvars.type;
+
+										if (dlgformvars.type === 'text')
+										{
+											if (dlgformvars.subtype !== '')  field.subtype = dlgformvars.subtype;
+										}
+
+										if (dlgformvars.type === 'text' || dlgformvars.type === 'textarea' || dlgformvars.type === 'checkbox' || dlgformvars.type === 'select' || dlgformvars.type === 'date' || dlgformvars.type === 'static' || dlgformvars.type === 'custom')
+										{
+											if (dlgformvars.field_title !== '')  field.title = dlgformvars.field_title;
+											if (dlgformvars.field_width !== '')  field.width = dlgformvars.field_width.replaceAll(/[^0-9]/g, '') + 'em';
+										}
+
+										if (dlgformvars.type === 'text' || dlgformvars.type === 'textarea' || dlgformvars.type === 'checkbox' || dlgformvars.type === 'select' || dlgformvars.type === 'date')
+										{
+											field.required = (dlgformvars.hasOwnProperty('field_required') && dlgformvars.field_required === 'Yes');
+										}
+
+										if (dlgformvars.type === 'text' || dlgformvars.type === 'textarea' || dlgformvars.type === 'checkbox' || dlgformvars.type === 'select' || dlgformvars.type === 'date' || dlgformvars.type === 'hidden')
+										{
+											field.name = dlgformvars.field_name;
+
+											if (field.name !== '')  delete this.settings.errors.field_name;
+											else  this.settings.errors.field_name = 'Please enter an Internal Field Name.';
+										}
+
+										if (dlgformvars.type === 'text' || dlgformvars.type === 'date')  field.default = dlgformvars.default_text;
+										if (dlgformvars.type === 'checkbox')  field.value = dlgformvars.default_text;
+										if (dlgformvars.type === 'hidden' || dlgformvars.type === 'static')  field.value = dlgformvars.default_text;
+										if (dlgformvars.type === 'textarea' || dlgformvars.type === 'custom')  field.value = dlgformvars.default_textarea;
+
+										if (dlgformvars.type === 'checkbox')
+										{
+											field.display = dlgformvars.field_display;
+											field.default = (dlgformvars.hasOwnProperty('default_check') && dlgformvars.default_check === 'Yes');
+										}
+
+										if (dlgformvars.type === 'select')
+										{
+											field.mode = dlgformvars.select_mode;
+											field.options = ParseSelectOptions(dlgformvars.select_options);
+											field.default = ParseSelections(dlgformvars.default_select);
+										}
+
+										if (dlgformvars.type === 'text' || dlgformvars.type === 'textarea' || dlgformvars.type === 'checkbox' || dlgformvars.type === 'select' || dlgformvars.type === 'date' || dlgformvars.type === 'static' || dlgformvars.type === 'custom')
+										{
+											if (dlgformvars.hasOwnProperty('htmldesc') && dlgformvars.htmldesc === 'Yes')  field.htmldesc = dlgformvars.field_desc;
+											else  field.desc = dlgformvars.field_desc;
+										}
+
+										if (dlgformvars.type === 'text' || dlgformvars.type === 'textarea' || dlgformvars.type === 'checkbox' || dlgformvars.type === 'select' || dlgformvars.type === 'date')
+										{
+											field.validator = dlgformvars.validator.trim();
+										}
+									}
+
+									if (this.HasErrors())
+									{
+										this.UpdateContent();
+
+										SetupDialog();
+
+										return;
+									}
+
+									inputelem.value = JSON.stringify(field);
+
+									titleelem.innerHTML = GetUpdatedFieldTitleHTML(field);
+
+									var formvars = FlexForms.GetFormVars(formnode);
+
+									SaveAndUpdatePreview(formvars);
+								}
+
+								this.Destroy();
+							},
+
+							onclose: function() {
+								this.Destroy();
+							}
+						};
+
+						var dlg = FlexForms.Dialog(document.body, dlgoptions);
+
+						var SwitchFieldType = function(e) {
+							// Hide all fields.
+							var tempdivs = dlgformnode.querySelectorAll('.edit_field_showhide');
+
+							for (var x = 0; x < tempdivs.length; x++)  tempdivs[x].classList.add('hidden');
+
+							// Show type fields.
+							tempdivs = dlgformnode.querySelectorAll('.edit_field-' + typeelem.value);
+
+							for (var x = 0; x < tempdivs.length; x++)  tempdivs[x].classList.remove('hidden');
+
+							dlg.CenterDialog();
+						};
+
+						SetupDialog();
+					}
+					else if (e.target.classList.contains('delete_field'))
+					{
+						// Delete field.
+						e.preventDefault();
+
+						FlexForms.Dialog.Confirm('Delete Field', 'Are you sure you want to delete this field?', 'Yes', 'No', function() {
+							e.target.closest('tr').remove();
+
+							var formvars = FlexForms.GetFormVars(formnode);
+
+							SaveAndUpdatePreview(formvars);
+						});
+					}
+				};
+
+				formnode.querySelector('.offline_fields tbody').addEventListener('click', FormFieldsClickHandler);
+
+				jQuery('.offline_fields').tableDnD({
+					dragHandle: '.draghandle',
+					onDragClass: 'dragactive',
+					onDrop: function(table, row) {
+						var formvars = FlexForms.GetFormVars(formnode);
+
+						SaveAndUpdatePreview(formvars);
+					}
+				});
+
+				var SubmitHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					var formvars = FlexForms.GetFormVars(formnode, e);
+
+					SaveAndUpdatePreview(formvars);
+				};
+
+				formnode.querySelector('input[name=title]').addEventListener('change', SubmitHandler);
+				formnode.querySelector('input[name=enabled]').addEventListener('change', SubmitHandler);
+				formnode.querySelector('textarea[name=desc]').addEventListener('change', SubmitHandler);
+				formnode.querySelector('textarea[name=init_js]').addEventListener('change', SubmitHandler);
+				formnode.querySelector('input[name=submit]').addEventListener('change', SubmitHandler);
+				formnode.querySelector('textarea[name=thanks]').addEventListener('change', SubmitHandler);
+
+				// Select all the text in the export field on focus.
+				var ExportSelectAll = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.target.select();
+				};
+
+				// Export clipboard cut/copy handler.
+				var ExportClipboardCutCopyHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					e.clipboardData.dropEffect = 'copy';
+					e.clipboardData.setData('text/plain', JSON.stringify(config.forms[options.id]));
+
+					FlexForms.Dialog.Alert('Exported', 'Copied the exported form to the clipboard.', null, 3000);
+				};
+
+				// Clipboard paste handler.
+				var ExportClipboardPasteHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+				};
+
+				var ExportClickHandler = function(e) {
+					if (!e.isTrusted)  return;
+
+					e.preventDefault();
+
+					formnode.querySelector('input[name=export]').focus();
+
+					document.execCommand('copy');
+				};
+
+				// Restore the export textbox if it is changed.
+				formnode.querySelector('input[name=export]').addEventListener('change', function (e) {
+					formnode.querySelector('input[name=export]').value = JSON.stringify(config.forms[options.id]);
+				});
+
+				formnode.querySelector('input[name=export]').addEventListener('focus', ExportSelectAll);
+				formnode.querySelector('input[name=export]').addEventListener('cut', ExportClipboardCutCopyHandler);
+				formnode.querySelector('input[name=export]').addEventListener('copy', ExportClipboardCutCopyHandler);
+				formnode.querySelector('input[name=export]').addEventListener('paste', ExportClipboardPasteHandler);
+				document.getElementById('export_copy').addEventListener('click', ExportClickHandler);
+			}
+		}
+
+		return false;
+	};
+
+	LoadConfig();
+
+	if (window.location.hash !== '' && window.location.hash !== '#')  SwitchAppState('viewform', {id: window.location.hash.substring(1)});
+	else  SwitchAppState('mainmenu', {});
+
+	window.LoadConfig = LoadConfig;
+	window.SwitchAppState = SwitchAppState;
+})();
+</script>
+</div>
+<div class="hidden">
+	<img src="support/flex_forms_error.png">
+</div>
+</body>
+</html>
