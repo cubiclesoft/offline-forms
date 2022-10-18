@@ -1,5 +1,5 @@
 Offline Forms
--------------
+=============
 
 A form designer and data gathering tool for use in areas with spotty or unknown Internet connectivity.  Powered by any standard web browser.  Offline Forms is a useful solution to the problem of digitally gathering data even when Internet access is not functional or only partially functional.  Choose from a MIT or LGPL license.
 
